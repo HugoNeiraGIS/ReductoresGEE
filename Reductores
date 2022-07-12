@@ -1,0 +1,120 @@
+// Sentinel 2 surface reflectance
+var Sen2 = ee.ImageCollection("COPERNICUS/S2_SR");
+print(Sen2);
+// Cargar área de interés
+var limite_yali = table;
+print(limite_yali);
+Map.addLayer(table);
+
+/*
+// Filtro por zona filterBounds(geometria)
+var Sen2_f = Sen2.filterBounds(limite_yali);
+print(Sen2_f);
+
+//Filtro por fechas filterDate("año inicio", "año fin") "aaaa-mm-dd"
+var Sen2_f = Sen2_f.filterDate("2015-01-01","2020-01-01");
+print(Sen2_f);
+
+//Filtro por metadata filterMetadata("propiedad_metadata","operador",valor)
+var Sen2_f = Sen2_f.filterMetadata("CLOUDY_PIXEL_PERCENTAGE", "less_than", 15);
+print(Sen2_f);
+*/
+
+// Function to mask clouds using the Sentinel-2
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
+             qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  // Return the masked and scaled data, without the QA bands.
+  return image.updateMask(mask).divide(10000)
+      .select("B.*")
+      .copyProperties(image, ["system:time_start"])
+}
+
+// Map the function over one year of data and take the median.
+// Load Sentinel-2 TOA reflectance data.
+var collection = ee.ImageCollection("COPERNICUS/S2_SR")
+    .filterDate("2015-01-01","2020-01-01")
+    // Pre-filter to get less cloudy granules.
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 15))
+    .map(maskS2clouds);
+
+var composite = collection.median();
+
+
+// Cortar imagen
+var corte_yali_clouds = composite.clip(table);
+Map.addLayer(corte_yali_clouds, {bands: ['B4', 'B3', 'B2'], min: 0, max: 0.3}, 'RGB without Clouds clip');
+
+
+// Display the results.
+Map.addLayer(composite, {bands: ['B4', 'B3', 'B2'], min: 0, max: 0.6}, 'RGB without Clouds');
+Map.centerObject(table);
+
+var S2_filtro = Sen2.filterBounds(table)
+                  .filterMetadata("CLOUDY_PIXEL_PERCENTAGE", "less_than", 15)
+                  .map(corte_yali_clouds)
+                  .map(maskS2clouds)
+Map.addLayer(S2_filtro,{},"Sentinel 2 Cuenca Yali");
+print(S2_filtro) 
+
+var S2_media = S2_filtro.mean()
+Map.addLayer(S2_media)
+
+var S2_mediana = S2_filtro.median()
+Map.addLayer(S2_mediana)
+
+var S2_max = S2_filtro.max()
+Map.addLayer(S2_max)
+
+var S2_min = S2_filtro.min()
+Map.addLayer(S2_min)
+
+//Map.addLayer(Sen2_f);
+Map.addLayer(Sen2_f, {bands: ["B8","B4","B3"], min: 33, max: 4613},"Imagen_Sentinel2_Yali");
+
+var imagen_Sen2_f = ee.Image("COPERNICUS/S2_SR/20190509T143751_20190509T145100_T19HBC");
+print(imagen_Sen2_f);
+
+///////////Funcion de calculode NDVI
+function ndvi_Sen2_f(imagen) {
+  var ndvi = imagen.normalizedDifference(["B8","B4"]).rename("NDVI");
+  return imagen.addBands(ndvi);
+}
+
+//////Aplicamos la funcion en la imagen
+var imagen_Sen2_f_ndvi = ndvi_Sen2_f(imagen_Sen2_f);
+print(imagen_Sen2_f_ndvi);
+//////Aplicamos la funcion en la coleccion de imagenes
+var imagen_Sen2_f_ndvi = Sen2_f.map(ndvi_Sen2_f);
+print(imagen_Sen2_f_ndvi);
+
+
+////Aplicamos función corte por la cuenca del Yali
+function corte(image){
+  return image.clip(limite_yali); //es necesario declarar la capa de corte antes e incluirla en la funcion 
+}
+
+///// Creamos la paleta del NDVI como una variable
+var palette = ['060eff','19ff0a','ff04ec'];
+
+/////Corte al NDVI
+var S2_corte = imagen_Sen2_f_ndvi.map(corte);
+Map.addLayer(S2_corte, {bands: ["NDVI"], min: 0, max: 1, palette: palette},"Imagen_CuencaYali_NDVI");
+
+//Graficamos la serie de tiempo de NDVI de la cuenca del Yali
+print("NDVI Cuenca Yali:",ui.Chart.image.seriesByRegion({
+  imageCollection: imagen_Sen2_f_ndvi.select("NDVI"), //seleccionamos la banda que queremos graficar de la coleccion de imagenes
+  regions: table, // Crearemos un poligono en la zona que nos interese ver la serie de tiempo
+  reducer:ee.Reducer.mean(), // Usaremos la media como reductor del grafico
+  scale: 15, // Escala de la imagen
+  xProperty:'system:time_start'})); //Nos pide seleccionar cual sera el eje X ('system:time_start') contiene la fecha de la imagen
+
+
